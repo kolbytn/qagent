@@ -10,9 +10,6 @@ class QEnv(gym.Env):
     def __init__(self, full_info=False):
         super().__init__()
 
-        self.num_obstacles = 4
-        self.used_obstacles = 2
-        self.obstance_density = .5
         self.mods = [
             QEnv.mod_bounce,
             QEnv.mod_null,
@@ -22,13 +19,20 @@ class QEnv(gym.Env):
             QEnv.mod_terminate
         ]
 
+        self.num_obstacles = 5
+        self.used_obstacles = 3
+        self.obstance_density = .2
+        self.max_steps = 200
+
+        self.full_info = full_info
+
+        self.t = 0
+
         self.observation_space = Dict({
             "obs": Box(0, 1, shape=(QEnv.GRID_SIZE, QEnv.GRID_SIZE, self.num_obstacles+2), dtype=np.int64),
             "info": Box(0, 1, shape=(self.num_obstacles, len(self.mods), 2), dtype=np.int64)
         })
         self.action_space = Discrete(4 + self.num_obstacles if full_info else 4)
-
-        self.full_info = full_info
 
         self.grid = np.zeros((QEnv.GRID_SIZE, QEnv.GRID_SIZE, self.num_obstacles+2))
         self.info = np.zeros((self.num_obstacles, len(self.mods), 2))
@@ -74,6 +78,8 @@ class QEnv(gym.Env):
         else:
             self.info_mask = np.zeros((self.num_obstacles, len(self.mods)))
 
+        self.t = 0
+
         return self.get_full_obs()
 
     def step(self, action):
@@ -88,6 +94,7 @@ class QEnv(gym.Env):
             reward = 0
             done = False
 
+            mod_count = 0
             obst = np.where(self.grid[y, x, 2:])[0]
             while obst.size > 0 and not done:
                 mod_vector = np.where(self.info[obst.item()])[1]
@@ -103,6 +110,14 @@ class QEnv(gym.Env):
                 y, x = self.current_pos()
 
                 obst = np.where(self.grid[y, x, 2:])[0]
+                mod_count += 1
+
+                if mod_count >= 100:
+                    # print("got stuck")
+                    # self.render_info()
+                    # self.render()
+                    done = True
+                    break
 
             if np.where(self.grid[:, :, 0]) == np.where(self.grid[:, :, 1]):
                 done = True
@@ -114,29 +129,46 @@ class QEnv(gym.Env):
             reward = 0
             done = False
 
+        self.t += 1
+        if self.t >= self.max_steps:
+            done = True
+
         return self.get_full_obs(), reward, done, dict()
 
     def render(self):
-        print(self.grid)
-        symbols = ["@", "G"] + [str(i) for i in range(self.num_obstacles)]
+
+        def get_symbol(cell_vector):
+            symbols = ["@", "G"] + [str(i) for i in range(self.num_obstacles)]
+            if np.any(cell_vector):
+                return symbols[np.where(cell_vector)[0][0]]
+            else:
+                return "."
 
         out = ""
         for y in range(self.GRID_SIZE):
             for x in range(self.GRID_SIZE):
                 cell = self.grid[y, x]
-                if np.any(cell):
-                    out += symbols[np.where(cell)[0][0]]
-                else:
-                    out += "."
+                out += get_symbol(cell)
             out += "\n"
+        cell = self.grid[self.current_pos()]
+        cell[0] = 0
+        out += "@ = " + get_symbol(cell) + "\n"
 
         print(out)
+
+    def render_info(self):
+        for obst in range(self.num_obstacles):
+            mod_vector = np.where(self.info[obst])[1]
+            mod_idx = np.where(mod_vector)[0]
+            mod_fun = self.mods[mod_idx.item()]
+
+            print(obst, mod_fun, "*" if self.info_mask[obst, 0] == 1 else "")
 
     def get_full_obs(self):
         masked_info = self.info * np.expand_dims(self.info_mask, -1)
         full_obs = {
-            "obs": self.grid,
-            "info": masked_info
+            "obs": self.grid.astype(np.int64),
+            "info": masked_info.astype(np.int64)
         }
         return full_obs
 
